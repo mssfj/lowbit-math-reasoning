@@ -2,7 +2,11 @@
 set -euxo pipefail
 
 # ==== 設定 ====
-PROJECT_ROOT="~/llm-2026-eval/"
+if [ "$#" -lt 1 ]; then
+	echo "プロジェクトのルートディレクトリの指定が必要です。例)bash vastai-setup_uv.sh /workspace/llm-2026-eval,/root/llm-2026-eval" >&2
+  exit 1
+fi
+PROJECT_ROOT="$(realpath -m "$1")"
 
 # ==== 0. 基本パッケージ ====
 sudo apt-get update
@@ -69,7 +73,8 @@ dependencies = [
     "bitsandbytes",
     "sentencepiece",
     "evaluate",
-    "wandb",
+    # wandb 0.12.x is incompatible with NumPy 2.x (np.float_ removal).
+    "wandb==0.19.11",
     "tiktoken",
     "scikit-learn",
     "numpy",
@@ -106,7 +111,7 @@ dev = [
 EOF
 
 # ==== 4. 依存インストール（Torch 以外） ====
-uv sync --group sft --group grpo --group dev
+uv sync --group sft --group grpo --group dev --group eval
 
 # ==== 5. PyTorch (CUDA 12.1 wheel) ====
 uv pip install --index-url https://download.pytorch.org/whl/cu121 \
@@ -135,5 +140,5 @@ git config --global user.email "mss.fujimoto@gmail.com"
 git config --global user.name "Masashi Fujimoto"
 
 # ==== 9.クリーニング ====
-rm -r aws
-rm awscliv2.zip
+rm -r ./aws
+rm ./awscliv2.zip
