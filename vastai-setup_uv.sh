@@ -133,3 +133,7 @@ echo "  uv run python your_script.py"
 # ==== 8.git 初期化 ====
 git config --global user.email "mss.fujimoto@gmail.com"
 git config --global user.name "Masashi Fujimoto"
+
+# ==== 9.クリーニング ====
+rm -r aws
+rm awscliv2.zip
