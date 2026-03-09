@@ -1,7 +1,7 @@
 #!/usr/bin/env python/
 # eval.py
 """
-Unsloth 4bit Base Model + LoRA + vLLM で HuggingFaceH4/MATH-500 を評価するスクリプト。
+Base Model + LoRA + vLLM で HuggingFaceH4/MATH-500 を評価するスクリプト。
 """
 
 import argparse
@@ -20,29 +20,25 @@ from transformers import AutoTokenizer
 
 WANDB_PROJECT = "qwen3.5-9b-math500-100"
 WANDB_ENTITY = "mssfj-1"
-WANDB_RUNNAME = "qwen3.5-9b-base"
+WANDB_RUNNAME = "qwen3.5-9b"
 DATASET_NAME = "HuggingFaceH4/MATH-500"
 
 MODEL_NAME = "Qwen/Qwen3.5-9B"
 VLLM_TENSOR_PARALLEL_SIZE = 1
-VLLM_MAX_MODEL_LEN = 2048
-VLLM_GPU_MEMORY_UTILIZATION = 0.6
-VLLM_BATCH_SIZE = 4
+VLLM_MAX_MODEL_LEN = 1024
+VLLM_GPU_MEMORY_UTILIZATION = 0.9
+VLLM_BATCH_SIZE = 8
+VLLM_ENFORCE_EAGER = False
+VLLM_QUANTIZATION = "none"
+VLLM_LOAD_FORMAT = "none"
+VLLM_MAX_TOKENS = 1024
 MAX_SAMPLES = 10
 
+PROJECT_HOME_PATH = "/workspace/llm-2026-eval"
+SPRIT_MODEL_NAME = MODEL_NAME.rsplit("/", 1)[-1]
 #LORA_PATH = "/workspace/model/qwen3_sft_lora_openmathinst2-1000/"
 LORA_PATH = ""
-OUTPUT_PATH = "/workspace/outputs/math500_eval_qwen3.5-9b.jsonl"
-
-
-def extract_gsm8k_gold_answer(answer_text: str) -> str:
-    lines = [ln.strip() for ln in answer_text.splitlines() if ln.strip()]
-    for ln in reversed(lines):
-        if "####" in ln:
-            after = ln.split("####", 1)[1].strip()
-            return after
-    return lines[-1] if lines else ""
-
+OUTPUT_PATH = f"{PROJECT_HOME_PATH}/outputs/math500_{SPRIT_MODEL_NAME}.jsonl"
 
 def extract_math500_gold_answer(ex: Dict[str, Any]) -> str:
     for key in ("answer", "final_answer", "expected_answer", "target"):
@@ -50,19 +46,12 @@ def extract_math500_gold_answer(ex: Dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
 
-    solution = ex.get("solution")
-    if isinstance(solution, str) and solution.strip():
-        return extract_gsm8k_gold_answer(solution)
-
     return ""
-
-# チャットテンプレートを適用するためトークナイザを定義する
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
 def build_prompt(question: str, tokenizer) -> str:
     messages = [
         {"role": "system", "content": "You are a careful mathematical problem solver."},
-        {"role": "user", "content": f"Solve the following problem step by step.\nProblem:\n{question}\nOutput the answer in the format: Final Answer: <number>"}
+        {"role": "user", "content": f"Solve the following problem briefly and show only the essential reasoning.\nProblem:\n{question}\nOutput the answer in the format: Final Answer: <answer>"}
     ]
     # トークナイザーのテンプレートを適用
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -71,7 +60,11 @@ def evaluate_with_vllm(
     model_name: str,
     lora_path: Optional[str] = None,
     max_samples: Optional[int] = None,
-    batch_size: int = 8,
+    batch_size: int = VLLM_BATCH_SIZE,
+    max_tokens: int = VLLM_MAX_TOKENS,
+    enforce_eager: bool = VLLM_ENFORCE_EAGER,
+    quantization: str = VLLM_QUANTIZATION,
+    load_format: str = VLLM_LOAD_FORMAT,
     output_path: Optional[str] = None,
     wandb_run=None,
     wandb_log_artifacts: bool = False,
@@ -87,30 +80,40 @@ def evaluate_with_vllm(
     if max_samples is not None:
         ds = ds.select(range(min(max_samples, len(ds))))
 
-    print(f"Loading 4-bit Quantized Base Model: {model_name}")
+    print(f"Loading Base Model: {model_name}")
+    print(f"Quantization: {quantization}")
+    print(f"Load format: {load_format}")
 
     if lora_path:
         print(f"Enabling LoRA with adapter: {lora_path}")
 
+    use_lora = bool(lora_path)
+
+    llm_kwargs = {
+        "model": model_name,
+        "trust_remote_code": True,
+        "tensor_parallel_size": VLLM_TENSOR_PARALLEL_SIZE,
+        "max_model_len": VLLM_MAX_MODEL_LEN,
+        "enforce_eager": enforce_eager,
+        "gpu_memory_utilization": VLLM_GPU_MEMORY_UTILIZATION,
+        "max_num_seqs": batch_size,
+        "enable_lora": use_lora,
+        "max_lora_rank": 32 if use_lora else 16,
+    }
+    if quantization != "none":
+        llm_kwargs["quantization"] = quantization
+    if load_format != "none":
+        llm_kwargs["load_format"] = load_format
+
     llm = LLM(
-        model=model_name,
-        trust_remote_code=True,
-        tensor_parallel_size=VLLM_TENSOR_PARALLEL_SIZE,
-        max_model_len=VLLM_MAX_MODEL_LEN,
-        quantization="bitsandbytes",
-        load_format="bitsandbytes",
-        enforce_eager=True,
-        gpu_memory_utilization=VLLM_GPU_MEMORY_UTILIZATION,
-        max_num_seqs=batch_size,
-        enable_lora=(lora_path is not None),
-        max_lora_rank=32 if lora_path else 16,
+        **llm_kwargs,
     )
 
     # ★重要: Stop Tokenの設定変更（前回の指摘事項）
     sampling_params = SamplingParams(
         temperature=0.0,
         top_p=1.0,
-        max_tokens=2048,
+        max_tokens=max_tokens,
         stop=None, # "Final Answer:" で止まらないように削除
     )
     
@@ -131,7 +134,7 @@ def evaluate_with_vllm(
     print("Running vLLM generation...")
     
     lora_request = None
-    if lora_path:
+    if use_lora:
         lora_request = LoRARequest("adapter", 1, lora_path)
 
     outputs: List[Any] = []
@@ -166,7 +169,8 @@ def evaluate_with_vllm(
 
     em = num_correct / max(num_total, 1)
     print(f"\n==== Evaluation Result ====")
-    print(f"Base Model (4bit): {model_name}")
+    print(f"Base Model: {model_name}")
+    print(f"Quantization: {quantization}")
     print(f"LoRA Path: {lora_path}")
     print(f"EM: {em:.4f}")
 
@@ -176,6 +180,9 @@ def evaluate_with_vllm(
     }
 
     if output_path:
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             for row in detailed_results:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -206,10 +213,31 @@ def evaluate_with_vllm(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--model-name",type=str,default=f"{MODEL_NAME}",help="Hugging Face 4-bit base model name.")
+    p.add_argument("--model-name",type=str,default=f"{MODEL_NAME}",help="Hugging Face base model name.")
     p.add_argument("--lora-path",type=str,default=LORA_PATH,help="Path to the LoRA adapter.")
     p.add_argument("--max-samples", type=int, default=MAX_SAMPLES)
     p.add_argument("--batch-size", type=int,default=VLLM_BATCH_SIZE,help="vLLM batch size (passed to max_num_seqs).")
+    p.add_argument("--max-tokens", type=int, default=VLLM_MAX_TOKENS, help="Maximum number of generated tokens per sample.")
+    p.add_argument(
+        "--enforce-eager",
+        action=argparse.BooleanOptionalAction,
+        default=VLLM_ENFORCE_EAGER,
+        help="Force eager execution in vLLM. Disable for better throughput when stable.",
+    )
+    p.add_argument(
+        "--quantization",
+        type=str,
+        default=VLLM_QUANTIZATION,
+        choices=["bitsandbytes", "none"],
+        help="vLLM quantization mode. Use 'none' to disable quantization.",
+    )
+    p.add_argument(
+        "--load-format",
+        type=str,
+        default=VLLM_LOAD_FORMAT,
+        choices=["bitsandbytes", "none"],
+        help="vLLM load format. Set to 'none' when running without quantization.",
+    )
     p.add_argument("--output-path", type=str, default=f"{OUTPUT_PATH}")
     p.add_argument("--wandb-project", type=str, default=f"{WANDB_PROJECT}", help="W&B project name.")
     p.add_argument("--wandb-entity", type=str, default=f"{WANDB_ENTITY}", help="W&B entity/user.")
@@ -247,6 +275,10 @@ def init_wandb(args: argparse.Namespace):
             "lora_path": args.lora_path,
             "max_samples": args.max_samples,
             "batch_size": args.batch_size,
+            "max_tokens": args.max_tokens,
+            "enforce_eager": args.enforce_eager,
+            "quantization": args.quantization,
+            "load_format": args.load_format,
             "output_path": args.output_path,
         },
     }
@@ -263,6 +295,10 @@ def main():
             lora_path = args.lora_path,
             max_samples = args.max_samples if args.max_samples > 0 else None,
             batch_size = args.batch_size,
+            max_tokens = args.max_tokens,
+            enforce_eager = args.enforce_eager,
+            quantization = args.quantization,
+            load_format = args.load_format,
             output_path = args.output_path,
             wandb_run = wandb_run,
             wandb_log_artifacts = args.wandb_log_artifacts,

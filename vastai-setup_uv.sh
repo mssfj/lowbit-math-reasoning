@@ -120,7 +120,8 @@ uv pip install --index-url https://download.pytorch.org/whl/cu121 \
     "torchaudio==2.4.0"
 
 # ==== 6. ディレクトリ構成 ====
-mkdir -p ../logs ../checkpoints ../configs ../data ../model
+# mkdir -p "${PROJECT_ROOT}"/logs "${PROJECT_ROOT}"/checkpoints "${PROJECT_ROOT}"/configs "${PROJECT_ROOT}"/data "${PROJECT_ROOT}"/model
+mkdir -p "${PROJECT_ROOT}"/configs "${PROJECT_ROOT}"/outputs
 
 # ==== 7. 動作確認 ====
 uv run python - << 'PYCODE'
