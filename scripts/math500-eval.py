@@ -14,24 +14,24 @@ from datasets import load_dataset
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
-from mymath_verify import verify_math_answer, MathVerifyConfig, MathVerifyResult
+from mymath_verify_math500 import verify_math_answer, MathVerifyConfig, MathVerifyResult
 
 from transformers import AutoTokenizer
 
-WANDB_PROJECT = "qwen3.5-9b-math500-100"
+WANDB_PROJECT = "qwen3.5-9b-math500"
 WANDB_ENTITY = "mssfj-1"
 WANDB_RUNNAME = "qwen3.5-9b"
 DATASET_NAME = "HuggingFaceH4/MATH-500"
 
 MODEL_NAME = "Qwen/Qwen3.5-9B"
 VLLM_TENSOR_PARALLEL_SIZE = 1
-VLLM_MAX_MODEL_LEN = 1024
-VLLM_GPU_MEMORY_UTILIZATION = 0.9
-VLLM_BATCH_SIZE = 8
+VLLM_MAX_MODEL_LEN = 2048
+VLLM_GPU_MEMORY_UTILIZATION = 0.85
+VLLM_BATCH_SIZE = 2
 VLLM_ENFORCE_EAGER = False
 VLLM_QUANTIZATION = "none"
 VLLM_LOAD_FORMAT = "none"
-VLLM_MAX_TOKENS = 1024
+VLLM_MAX_TOKENS = 2048
 MAX_SAMPLES = 10
 
 PROJECT_HOME_PATH = "/workspace/llm-2026-eval"
@@ -51,7 +51,15 @@ def extract_math500_gold_answer(ex: Dict[str, Any]) -> str:
 def build_prompt(question: str, tokenizer) -> str:
     messages = [
         {"role": "system", "content": "You are a careful mathematical problem solver."},
-        {"role": "user", "content": f"Solve the following problem briefly and show only the essential reasoning.\nProblem:\n{question}\nOutput the answer in the format: Final Answer: <answer>"}
+        {
+            "role": "user",
+            "content": (
+                "Solve the following math problem carefully.\n"
+                "Show your reasoning step by step, but keep it brief.\n"
+                "After your reasoning, end with one line: Final Answer: ...\n\n"
+                f"Problem:\n{question}"
+            ),
+        }
     ]
     # トークナイザーのテンプレートを適用
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)

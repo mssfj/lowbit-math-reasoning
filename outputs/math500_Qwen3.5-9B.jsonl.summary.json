@@ -2,11 +2,11 @@
   "model_name": "Qwen/Qwen3.5-9B",
   "lora_path": "",
   "num_samples": 10,
-  "num_correct": 3,
-  "em": 0.3,
+  "num_correct": 7,
+  "em": 0.7,
   "reason_counts": {
-    "mismatch": 4,
-    "missing_final_answer": 3,
-    "exact_match": 3
+    "exact_match": 7,
+    "missing_final_answer": 2,
+    "mismatch": 1
   }
 }
