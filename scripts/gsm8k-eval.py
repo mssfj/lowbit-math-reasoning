@@ -20,13 +20,15 @@ from transformers import AutoTokenizer
 
 WANDB_PROJECT = "qwen3.5-9b-gsm8k-100"
 WANDB_ENTITY = "mssfj-1"
-WANDB_RUNNAME = "qwen3.5-9b-base"
+WANDB_RUNNAME = "qwen3.5-9b"
 
 MODEL_NAME = "Qwen/Qwen3.5-9B"
 
 #LORA_PATH = "/workspace/model/qwen3_sft_lora_openmathinst2-1000/"
 LORA_PATH = ""
-OUTPUT_PATH = "/workspace/outputs/gsm8k_eval_qwen3.5-9b.jsonl"
+BATCH_SIZE = 8
+MAX_TOKENS = 4096
+OUTPUT_PATH = "/workspace/llm-2026-eval/outputs/gsm8k_eval_qwen3.5-9b.jsonl"
 
 
 def extract_gsm8k_gold_answer(answer_text: str) -> str:
@@ -37,15 +39,17 @@ def extract_gsm8k_gold_answer(answer_text: str) -> str:
             return after
     return lines[-1] if lines else ""
 
-# チャットテンプレートを適用するためトークナイザを定義する
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-
 def build_prompt(question: str, tokenizer) -> str:
+    user_content = (
+        "Solve the following math problem step by step.\n"
+        "The last line of your response should be in the format: \\boxed{ANSWER}\n"
+        f"Problem: {question}"
+    )
+
     messages = [
         {"role": "system", "content": "You are a careful mathematical problem solver."},
-        {"role": "user", "content": f"Solve the following problem step by step.\nProblem:\n{question}\nOutput the answer in the format: Final Answer: <number>"}
+        {"role": "user", "content": user_content},
     ]
-    # トークナイザーのテンプレートを適用
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 def evaluate_gsm8k_with_vllm(
@@ -53,50 +57,48 @@ def evaluate_gsm8k_with_vllm(
     lora_path: Optional[str] = None,
     max_samples: Optional[int] = None,
     batch_size: int = 8,
+    max_tokens: int = 512,
     output_path: Optional[str] = None,
     wandb_run=None,
     wandb_log_artifacts: bool = False,
 ) -> Dict[str, Any]:
     
-    # --- 修正1: ここでトークナイザーをロードします ---
     print(f"Loading Tokenizer from: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    # ----------------------------------------------
 
     # データ読み込み
     ds = load_dataset("openai/gsm8k", "main", split="test")
     if max_samples is not None:
         ds = ds.select(range(min(max_samples, len(ds))))
 
-    print(f"Loading 4-bit Quantized Base Model: {model_name}")
+    print(f"Loading base model: {model_name}")
 
     if lora_path:
         print(f"Enabling LoRA with adapter: {lora_path}")
 
-    llm = LLM(
-        model=model_name,
-        trust_remote_code=True,
-        tensor_parallel_size=1,
-        max_model_len=4096,
-        quantization="bitsandbytes",
-        load_format="bitsandbytes",
-        enforce_eager=True,
-        gpu_memory_utilization=0.9,
-        enable_lora=(lora_path is not None),
-        max_lora_rank=32 if lora_path else 16,
-    )
+    llm_kwargs = {
+        "model": model_name,
+        "trust_remote_code": True,
+        "tensor_parallel_size": 1,
+        "max_model_len": 4096,
+        "enforce_eager": True,
+        "gpu_memory_utilization": 0.8,
+        "enable_lora": bool(lora_path),
+        "max_lora_rank": 32 if lora_path else 16,
+        "max_num_seqs": batch_size,
+    }
+    llm = LLM(**llm_kwargs)
 
-    # ★重要: Stop Tokenの設定変更（前回の指摘事項）
     sampling_params = SamplingParams(
         temperature=0.0,
         top_p=1.0,
-        max_tokens=2048,
-        stop=None, # "Final Answer:" で止まらないように削除
+        max_tokens=max_tokens,
+        stop=["\n\nQ:", "\n\nProblem:", "<|im_end|>"], # 無駄な生成を防ぐためのストップトークン
     )
     
     gold_answers: List[str] = []
     raw_questions: List[str] = []
-    prompts: List[str] = []  # ★ここも初期化が必要です（前回の指摘事項）
+    prompts: List[str] = []
 
     for ex in ds:
         q = ex["question"]
@@ -104,10 +106,7 @@ def evaluate_gsm8k_with_vllm(
         gold = extract_gsm8k_gold_answer(gold_full)
         raw_questions.append(q)
         gold_answers.append(gold)
-        
-        # --- 修正2: ここで tokenizer を渡します ---
         prompts.append(build_prompt(q, tokenizer)) 
-        # ----------------------------------------
 
     print("Running vLLM generation...")
     
@@ -115,39 +114,43 @@ def evaluate_gsm8k_with_vllm(
     if lora_path:
         lora_request = LoRARequest("adapter", 1, lora_path)
 
-    outputs: List[Any] = []
-    # vLLM は内部でスケジューリングしてくれる
-    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
-
-    # --- 以下評価ロジックは同じ ---
     config = MathVerifyConfig(use_exact=True, use_numeric=True, use_sympy=True, require_final_answer=True)
-    num_correct = 0
-    num_total = len(outputs)
-    reason_counter: Counter = Counter()
     detailed_results: List[Dict[str, Any]] = []
 
+    if output_path:
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+    # vLLMに全プロンプトを一度に渡してContinuous Batchingを活用する
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
+
     for i, (out, q, gold) in enumerate(zip(outputs, raw_questions, gold_answers)):
-        if not out.outputs:
-            pred_text = ""
-        else:
-            pred_text = out.outputs[0].text
-
+        pred_text = out.outputs[0].text if out.outputs else ""
         res: MathVerifyResult = verify_math_answer(pred_text, gold, config=config)
-        if res.is_correct:
+
+        row = {
+            "index": i,
+            "question": q,
+            "gold_answer": gold,
+            "model_output": pred_text,
+            "extracted_pred_answer": res.pred_answer,
+            "is_correct": res.is_correct,
+            "reason": res.reason,
+        }
+        detailed_results.append(row)
+
+    num_correct = 0
+    reason_counter: Counter = Counter()
+    num_total = len(detailed_results)
+    for i, row in enumerate(detailed_results):
+        if row["is_correct"]:
             num_correct += 1
-        reason_counter[res.reason] += 1
-
-        detailed_results.append({
-            "index": i, "question": q, "gold_answer": gold, "model_output": pred_text,
-            "extracted_pred_answer": res.pred_answer, "is_correct": res.is_correct, "reason": res.reason
-        })
-
-        if (i + 1) % 50 == 0:
-            print(f"Processed {i+1}/{num_total} samples")
+        reason_counter[row["reason"]] += 1
 
     em = num_correct / max(num_total, 1)
     print(f"\n==== Evaluation Result ====")
-    print(f"Base Model (4bit): {model_name}")
+    print(f"Base Model: {model_name}")
     print(f"LoRA Path: {lora_path}")
     print(f"EM: {em:.4f}")
 
@@ -190,7 +193,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model-name",type=str,default=f"{MODEL_NAME}",help="Hugging Face 4-bit base model name.")
     p.add_argument("--lora-path",type=str,default=LORA_PATH,help="Path to the LoRA adapter.")
     p.add_argument("--max-samples", type=int, default=100)
-    p.add_argument("--batch-size", type=int,default=16,help="vLLM batch size (passed to max_num_seqs).")
+    p.add_argument("--batch-size", type=int,default=BATCH_SIZE,help="vLLM batch size (passed to max_num_seqs).")
+    p.add_argument("--max-tokens", type=int, default=MAX_TOKENS, help="Maximum number of tokens to generate per sample.")
     p.add_argument("--output-path", type=str, default=f"{OUTPUT_PATH}")
     p.add_argument("--wandb-project", type=str, default=f"{WANDB_PROJECT}", help="W&B project name.")
     p.add_argument("--wandb-entity", type=str, default=f"{WANDB_ENTITY}", help="W&B entity/user.")
@@ -228,6 +232,7 @@ def init_wandb(args: argparse.Namespace):
             "lora_path": args.lora_path,
             "max_samples": args.max_samples,
             "batch_size": args.batch_size,
+            "max_tokens": args.max_tokens,
             "output_path": args.output_path,
         },
     }
@@ -244,6 +249,7 @@ def main():
             lora_path = args.lora_path,
             max_samples = args.max_samples if args.max_samples > 0 else None,
             batch_size = args.batch_size,
+            max_tokens = args.max_tokens,
             output_path = args.output_path,
             wandb_run = wandb_run,
             wandb_log_artifacts = args.wandb_log_artifacts,

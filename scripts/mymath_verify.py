@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from sympy import sympify, simplify
+from sympy import simplify, sympify
 from sympy.core.sympify import SympifyError
 
 
@@ -28,14 +28,14 @@ from sympy.core.sympify import SympifyError
 # =========================
 
 _FINAL_ANSWER_PATTERNS = [
-    r"final\s*answer\s*(?:[:：=]|is\b|->|⇒|=>)\s*(.+)",   # Final Answer: / Final Answer is / Final Answer -> xx
-    r"final\s*ans\s*(?:[:：=]|is\b|->|⇒|=>)\s*(.+)",      # Final Ans: xx
-    r"(?:the\s+)?answer\s*(?:is\b|[:：=])\s*(.+)",        # (The) answer is: xx
-    r"最終解\s*(?:[:：=は]|です)\s*(.+)",                 # 最終解: xx
-    r"最終答え\s*(?:[:：=は]|です)\s*(.+)",               # 最終答え: xx
-    r"最終的な答えは\s*(?:[:：=])?\s*(.+)",               # 最終的な答えは: xx
-    r"答えは\s*(?:[:：=])?\s*(.+)",                       # 答えは: xx
-    r"答え\s*(?:[:：=は]|です)\s*(.+)",                   # 答え: xx
+    r"final\s*answer\s*(?:[:：=]|is\b|->|⇒|=>)\s*(.+)",
+    r"final\s*ans\s*(?:[:：=]|is\b|->|⇒|=>)\s*(.+)",
+    r"(?:the\s+)?answer\s*(?:is\b|[:：=])\s*(.+)",
+    r"最終解\s*(?:[:：=は]|です)\s*(.+)",
+    r"最終答え\s*(?:[:：=は]|です)\s*(.+)",
+    r"最終的な答えは\s*(?:[:：=])?\s*(.+)",
+    r"答えは\s*(?:[:：=])?\s*(.+)",
+    r"答え\s*(?:[:：=は]|です)\s*(.+)",
 ]
 
 
@@ -47,27 +47,18 @@ class ExtractedAnswer:
 
 
 def _normalize_text(s: str) -> str:
-    """空白と全角・記号の最低限の正規化"""
     s = s.strip()
-    # 全角スペース → 半角
     s = s.replace("\u3000", " ")
-    # 連続スペースを1個に
     s = re.sub(r"\s+", " ", s)
     return s
 
 
 def _strip_trailing_punct(s: str) -> str:
-    """末尾の句読点・記号ゆらぎを吸収"""
     return re.sub(r"[，,。．、!！?？]+$", "", s).strip()
 
 
 def _strip_markdown_wrappers(s: str) -> str:
-    """
-    Markdown/LaTeX 由来の装飾記号（**, *, `, $, \\( \\)）を外側から取り除く。
-    末尾にだけ残った ** のようなケースも考慮し、前後の装飾を削る。
-    """
     s = s.strip()
-    # 対応する両端がある場合
     if (s.startswith("**") and s.endswith("**")) or (s.startswith("__") and s.endswith("__")):
         s = s[2:-2].strip()
     elif (s.startswith("*") and s.endswith("*")) or (s.startswith("_") and s.endswith("_")):
@@ -79,27 +70,129 @@ def _strip_markdown_wrappers(s: str) -> str:
     elif s.startswith("\\(") and s.endswith("\\)"):
         s = s[2:-2].strip()
 
-    # 末尾だけに残った装飾を削る（例: "26**"）
     s = re.sub(r"[`*_]+$", "", s).strip()
     s = re.sub(r"^[`*_]+", "", s).strip()
     return s
 
 
 def _postprocess_candidate(s: str) -> str:
-    """正規化＋装飾/末尾記号の削除をまとめて行う"""
     s = _normalize_text(s)
     s = _strip_markdown_wrappers(s)
     return _strip_trailing_punct(s)
+
+
+def _normalize_latex_expression(s: str) -> str:
+    s = _postprocess_candidate(s)
+    if not s:
+        return s
+    s = s.replace("\\left", "").replace("\\right", "")
+    s = s.replace("\\,", " ")
+    s = re.sub(r"\\text\s*\{([^{}]+)\}", r"\1", s)
+    s = re.sub(r"\\mathrm\s*\{([^{}]+)\}", r"\1", s)
+    s = s.replace("\\pi", "pi")
+    s = re.sub(r"\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}", r"(\1)/(\2)", s)
+    s = re.sub(r"\b([A-Za-z0-9.+-]+)\s*/\s*([A-Za-z0-9.+-]+)\b", r"(\1)/(\2)", s)
+    s = s.replace("^\\circ", " degrees")
+    s = s.replace("^{\\circ}", " degrees")
+    s = s.replace("°", " degrees")
+    s = re.sub(r"\bdegrees?\b", " degrees", s)
+    s = re.sub(r'["\']+$', "", s)
+    s = re.sub(r"\s*([(),=\[\]])\s*", r"\1", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _strip_reasoning_tags(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
+    return text
+
+
+def _is_instruction_like(s: str) -> bool:
+    lowered = _normalize_text(s).lower()
+    markers = (
+        "the last line must be",
+        "formatted as",
+        "output the answer in the format",
+        "do not output anything after",
+        "ensure the final line",
+        "final answer: ...",
+        "final answer: <answer>",
+        "final answer: <number>",
+    )
+    return any(marker in lowered for marker in markers)
 
 
 _NUMERIC_TOKEN_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:/\d+)?")
 
 
 def _extract_numeric_token(text: str) -> Optional[str]:
-    """行からそれらしい数値/分数トークンを抜き出す"""
     m = _NUMERIC_TOKEN_RE.search(text)
     if m:
         return _postprocess_candidate(m.group(0))
+    return None
+
+
+def _looks_like_expression(text: str) -> bool:
+    markers = ("\\frac", "\\sqrt", "\\pi", "(", ")", "[", "]", "{", "}", ",", "=")
+    return any(marker in text for marker in markers)
+
+
+def _looks_like_named_answer(text: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z .'-]*", text))
+
+
+def _is_complete_expression(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if stripped.endswith(("=", "+", "-", "*", "/", "^", "_", "\\", "(", "[", "{", ",")):
+        return False
+    if stripped.count("(") != stripped.count(")"):
+        return False
+    if stripped.count("[") != stripped.count("]"):
+        return False
+    if stripped.count("{") != stripped.count("}"):
+        return False
+    return True
+
+
+def _looks_like_standalone_answer(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if not _is_complete_expression(stripped):
+        return False
+    if len(stripped) > 64:
+        return False
+    if ":" in stripped:
+        return False
+    if _looks_like_named_answer(stripped):
+        return True
+    if _looks_like_expression(stripped) and len(stripped.split()) <= 4:
+        return True
+    if _extract_numeric_token(stripped) and _normalize_text(stripped) == _extract_numeric_token(stripped):
+        return True
+    return False
+
+
+def _extract_boxed_from_line(text: str) -> Optional[str]:
+    idx = text.rfind("\\boxed{")
+    if idx < 0:
+        return None
+
+    start_idx = idx + len("\\boxed{")
+    depth = 1
+    for i in range(start_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                trailing = text[i + 1 :].strip()
+                if trailing and trailing not in {".", "。"}:
+                    return None
+                return text[start_idx:i]
     return None
 
 
@@ -108,67 +201,57 @@ def extract_final_answer(raw_text: str) -> str:
 
 
 def extract_final_answer_with_meta(raw_text: str) -> ExtractedAnswer:
-    """
-    CoT込みの生成テキストから「最終的な答え」っぽい部分を抜き出す。
-
-    ルール：
-      1. Final Answer / 答え / 最終解 パターンを優先的にマッチ
-      2. 見つからなければ、キーワードを含む行の数値っぽい部分を拾う
-      3. それも無ければ最後の行の「数字または式」っぽい部分を返す
-    has_final_answer は「明示的に最終解答として提示されているか」を表す。
-    """
-    text = raw_text.strip()
+    text = _strip_reasoning_tags(raw_text).strip()
     if not text:
         return ExtractedAnswer("", False, "empty")
 
-    # 1) パターンマッチで抜き出す
-    for pat in _FINAL_ANSWER_PATTERNS:
-        m = re.search(pat, text, flags=re.IGNORECASE)
-        if m:
-            candidate = m.group(1)
-            candidate = _postprocess_candidate(candidate)
-            if candidate:
-                token = _extract_numeric_token(candidate)
-                return ExtractedAnswer(token if token else candidate, True, "pattern")
-
-    # 2) 行ごとに見て「Final Answer」「答え」などのキーワードを含む行を優先
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
         return ExtractedAnswer("", False, "empty_lines")
 
+    last_line = lines[-1]
+    boxed_content = _extract_boxed_from_line(last_line)
+    if boxed_content:
+        candidate = _normalize_latex_expression(boxed_content)
+        if candidate:
+            return ExtractedAnswer(candidate, True, "boxed")
+
+    if not _is_instruction_like(last_line):
+        for pat in _FINAL_ANSWER_PATTERNS:
+            m = re.search(pat, last_line, flags=re.IGNORECASE)
+            if not m:
+                continue
+            candidate = _normalize_latex_expression(m.group(1))
+            if not candidate or _is_instruction_like(candidate):
+                continue
+            if _looks_like_expression(candidate) or _looks_like_named_answer(candidate):
+                return ExtractedAnswer(candidate, True, "pattern_line_expr")
+            token = _extract_numeric_token(candidate)
+            return ExtractedAnswer(token if token else candidate, True, "pattern_line")
+
     keyword_re = re.compile(r"(final answer|final ans|answer|最終解|最終答え|答え)", flags=re.IGNORECASE)
-    for ln in reversed(lines):
-        if keyword_re.search(ln):
-            token = _extract_numeric_token(ln)
-            if token:
-                return ExtractedAnswer(token, True, "keyword_line")
-            candidate = _postprocess_candidate(ln)
+    if keyword_re.search(last_line) and not _is_instruction_like(last_line):
+        candidate = _normalize_latex_expression(last_line)
+        if candidate and not _is_instruction_like(candidate):
+            if not _is_complete_expression(candidate):
+                return ExtractedAnswer(candidate, False, "incomplete_keyword_line")
+            if _looks_like_expression(candidate) or _looks_like_named_answer(candidate):
+                return ExtractedAnswer(candidate, True, "keyword_line_expr")
             token = _extract_numeric_token(candidate)
             return ExtractedAnswer(token if token else candidate, True, "keyword_line")
 
-    # 3) キーワードが無ければ、最後の行の「それっぽい」トークンを拾う
-    last = lines[-1]
-    token = _extract_numeric_token(last)
-    if token:
-        # 最終行が単独の数値だけなら最終回答として扱う
-        clean_last = _normalize_text(_postprocess_candidate(last))
-        bare_answer = (
-            len(lines) == 1
-            or clean_last == token
-            or len(clean_last.split()) <= 3  # 数字＋簡単な単位程度
-        )
-        return ExtractedAnswer(token, bare_answer, "fallback")
+    last = _normalize_latex_expression(lines[-1])
+    if _looks_like_standalone_answer(last):
+        if _looks_like_named_answer(last):
+            has_final = len(lines) == 1 or len(last.split()) <= 3
+            return ExtractedAnswer(last, has_final, "fallback_named")
+        token = _extract_numeric_token(last)
+        if token and _normalize_text(last) == token:
+            bare_answer = len(lines) == 1 or _normalize_text(last) == token
+            return ExtractedAnswer(token, bare_answer, "fallback")
+        return ExtractedAnswer(last, len(lines) == 1, "fallback_expr")
 
-    # 何も取れなければ行全体を返す
-    candidate = _postprocess_candidate(last)
-    token = _extract_numeric_token(candidate)
-    answer = token if token else candidate
-    tokens = candidate.split()
-    has_final = (
-        len(lines) == 1
-        or (token is not None and len(tokens) <= 3)  # 数字＋簡単な単位程度なら最終回答扱い
-    )
-    return ExtractedAnswer(answer, has_final, "fallback")
+    return ExtractedAnswer(last, False, "fallback")
 
 
 # =========================
@@ -176,25 +259,16 @@ def extract_final_answer_with_meta(raw_text: str) -> ExtractedAnswer:
 # =========================
 
 def _parse_number(s: str) -> Optional[float]:
-    """
-    文字列から数値をパースする。
-    - 整数
-    - 小数
-    - 分数 (a/b)
-    - %（パーセント記号）
-    """
     s = _normalize_text(s)
     if not s:
         return None
 
-    # %（パーセント）
     if s.endswith("%"):
         try:
             return float(s[:-1]) / 100.0
         except ValueError:
             return None
 
-    # 分数 a/b
     if "/" in s:
         parts = s.split("/")
         if len(parts) == 2:
@@ -207,7 +281,6 @@ def _parse_number(s: str) -> Optional[float]:
             except ValueError:
                 pass
 
-    # 通常のfloat
     try:
         return float(s)
     except ValueError:
@@ -215,7 +288,6 @@ def _parse_number(s: str) -> Optional[float]:
 
 
 def numeric_close(a: float, b: float, rel_tol: float = 1e-6, abs_tol: float = 1e-9) -> bool:
-    """数値として十分近いかどうか"""
     return math.isclose(a, b, rel_tol=rel_tol, abs_tol=abs_tol)
 
 
@@ -224,14 +296,6 @@ def numeric_close(a: float, b: float, rel_tol: float = 1e-6, abs_tol: float = 1e
 # =========================
 
 def sympy_equiv(pred: str, gold: str) -> bool:
-    """
-    SymPyで pred と gold が等価か判定する。
-
-    例:
-      pred = "(x+1)*(x-1)"
-      gold = "x**2 - 1"
-      → True
-    """
     pred = pred.strip()
     gold = gold.strip()
     if not pred or not gold:
@@ -258,12 +322,12 @@ def sympy_equiv(pred: str, gold: str) -> bool:
 
 @dataclass
 class MathVerifyConfig:
-    use_exact: bool = True           # 完全一致をまず見る
-    use_numeric: bool = True         # 数値近似で判定
-    use_sympy: bool = True           # SymPy等価性チェック
+    use_exact: bool = True
+    use_numeric: bool = True
+    use_sympy: bool = True
     rel_tol: float = 1e-6
     abs_tol: float = 1e-9
-    require_final_answer: bool = True  # 最終回答の明示が無ければ不正解扱いにする
+    require_final_answer: bool = True
 
 
 @dataclass
@@ -279,19 +343,13 @@ def verify_math_answer(
     gold_answer: str,
     config: Optional[MathVerifyConfig] = None,
 ) -> MathVerifyResult:
-    """
-    math-verify のメイン関数。
-    - CoT込みpred_textから最終答えを抽出
-    - gold_answer と比較（require_final_answer が True の場合、最終解答が明示されていなければ不正解）
-    - is_correct / reason を返す
-    """
     if config is None:
         config = MathVerifyConfig()
 
-    gold = _normalize_text(gold_answer)
+    gold = _normalize_latex_expression(gold_answer)
     extracted = extract_final_answer_with_meta(pred_text)
     pred_raw = extracted.answer
-    pred = _normalize_text(pred_raw)
+    pred = _normalize_latex_expression(pred_raw)
 
     if config.require_final_answer and not extracted.has_final_answer:
         return MathVerifyResult(
@@ -301,7 +359,6 @@ def verify_math_answer(
             gold_answer=gold,
         )
 
-    # 1) 完全一致
     if config.use_exact and pred == gold:
         return MathVerifyResult(
             is_correct=True,
@@ -310,7 +367,17 @@ def verify_math_answer(
             gold_answer=gold,
         )
 
-    # 2) 数値近似
+    if config.use_exact:
+        pred_no_degrees = re.sub(r"\s+degrees\b", "", pred).strip()
+        gold_no_degrees = re.sub(r"\s+degrees\b", "", gold).strip()
+        if pred_no_degrees and pred_no_degrees == gold_no_degrees:
+            return MathVerifyResult(
+                is_correct=True,
+                reason="exact_match",
+                pred_answer=pred,
+                gold_answer=gold,
+            )
+
     if config.use_numeric:
         gv = _parse_number(gold)
         pv = _parse_number(pred)
@@ -323,7 +390,6 @@ def verify_math_answer(
                     gold_answer=gold,
                 )
 
-    # 3) SymPy 等価性
     if config.use_sympy:
         if sympy_equiv(pred, gold):
             return MathVerifyResult(
@@ -333,7 +399,6 @@ def verify_math_answer(
                 gold_answer=gold,
             )
 
-    # すべてダメなら不正解
     return MathVerifyResult(
         is_correct=False,
         reason="mismatch",
@@ -353,12 +418,6 @@ def math_reward(
     wrong_reward: float = 0.0,
     config: Optional[MathVerifyConfig] = None,
 ) -> Tuple[float, MathVerifyResult]:
-    """
-    GRPO / RLHF 用の reward 関数。
-    - 正解なら correct_reward
-    - 不正解なら wrong_reward
-    を返す。
-    """
     result = verify_math_answer(pred_text, gold_answer, config=config)
     reward = correct_reward if result.is_correct else wrong_reward
     return reward, result
