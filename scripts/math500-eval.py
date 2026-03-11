@@ -18,20 +18,20 @@ from mymath_verify_math500 import verify_math_answer, MathVerifyConfig, MathVeri
 
 from transformers import AutoTokenizer
 
-WANDB_PROJECT = "qwen3.5-9b-math500"
+WANDB_PROJECT = "qwen2.5-7b-instruct-math500"
 WANDB_ENTITY = "mssfj-1"
-WANDB_RUNNAME = "qwen3.5-9b"
+WANDB_RUNNAME = "qwen2.5-7b-instruct"
 DATASET_NAME = "HuggingFaceH4/MATH-500"
 
-MODEL_NAME = "Qwen/Qwen3.5-9B"
+MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 VLLM_TENSOR_PARALLEL_SIZE = 1
-VLLM_MAX_MODEL_LEN = 2048
+VLLM_MAX_MODEL_LEN = 8192
 VLLM_GPU_MEMORY_UTILIZATION = 0.9
 VLLM_BATCH_SIZE = 2
 VLLM_ENFORCE_EAGER = False
 VLLM_QUANTIZATION = "none"
 VLLM_LOAD_FORMAT = "none"
-VLLM_MAX_TOKENS = 512
+VLLM_MAX_TOKENS = 4096
 MAX_SAMPLES = 50
 
 PROJECT_HOME_PATH = "/workspace/llm-2026-eval"
@@ -53,17 +53,15 @@ def build_prompt(question: str, tokenizer, final_answer_only: bool = False) -> s
     if final_answer_only:
         user_content = (
             "Solve the following math problem.\n"
-            "Return only one final line in this exact format: Final Answer: ...\n"
+            "Return only your final answer within \\boxed{}.\n"
             "Do not include any other text.\n\n"
             f"Problem:\n{question}"
         )
     else:
         user_content = (
-            "Solve the following math problem.\n"
-            "Keep the response short.\n"
-            "Do not include planning, self-checks, or meta commentary.\n"
-            "End with exactly one line in this format: Final Answer: ...\n\n"
-            f"Problem:\n{question}"
+            "Solve the following math problem step by step.\n"
+            "The last line of your response should be in the format: \\boxed{ANSWER}\n"
+            f"Problem: {question}"
         )
 
     messages = [
@@ -121,7 +119,7 @@ def evaluate_with_vllm(
     llm = LLM(**llm_kwargs)
 
     sampling_params = SamplingParams(
-        temperature=0.0,
+        temperature=0.1,
         top_p=1.0,
         max_tokens=max_tokens,
         stop=None,

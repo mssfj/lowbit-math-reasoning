@@ -44,6 +44,9 @@ npm install -g @openai/codex@latest
 # 反映させるためにシェルを再起動、またはパスを通す
 hash -r
 
+# ==== gemini-cliのインストール ====
+npm install -g @google/gemini-cli
+
 # ==== 1. uv インストール ====
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"

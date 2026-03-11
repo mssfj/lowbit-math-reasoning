@@ -176,6 +176,25 @@ def _looks_like_standalone_answer(text: str) -> bool:
     return False
 
 
+def _extract_boxed(text: str) -> Optional[str]:
+    """\boxed{...} の中身を抽出する（ネストにも対応）"""
+    # 複数ある場合は最後の方にあるものを優先する（結論が最後に来るため）
+    idx = text.rfind("\\boxed{")
+    if idx < 0:
+        return None
+    
+    start_idx = idx + len("\\boxed{")
+    depth = 1
+    for i in range(start_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start_idx:i]
+    return None
+
+
 def extract_final_answer(raw_text: str) -> str:
     return extract_final_answer_with_meta(raw_text).answer
 
@@ -184,6 +203,14 @@ def extract_final_answer_with_meta(raw_text: str) -> ExtractedAnswer:
     text = _strip_reasoning_tags(raw_text).strip()
     if not text:
         return ExtractedAnswer("", False, "empty")
+
+    # 1) \boxed{...} を最優先で探す（MATH評価の標準）
+    boxed_content = _extract_boxed(text)
+    if boxed_content:
+        # \boxed の中身をさらにクリーニング
+        candidate = _normalize_latex_expression(boxed_content)
+        if candidate:
+            return ExtractedAnswer(candidate, True, "boxed")
 
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
