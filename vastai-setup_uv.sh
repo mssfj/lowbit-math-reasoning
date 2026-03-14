@@ -86,6 +86,8 @@ dependencies = [
     "sympy",
     "unsloth",
     "vllm",
+    "gptqmodel>=5.7.0",
+    "optimum>=2.1.0",
 ]
 
 # グループ依存（uv の新仕様）
@@ -116,6 +118,11 @@ EOF
 # ==== 4. 依存インストール（Torch 以外） ====
 uv sync --group sft --group grpo --group dev --group eval
 
+# Qwen3.5 GPTQ 量子化では、公開版 transformers 4.x では model_type=qwen3_5 を
+# 認識できないため、GitHub の最新版で上書きする。
+uv pip install --python .venv/bin/python --upgrade \
+    git+https://github.com/huggingface/transformers.git
+
 # ==== 5. PyTorch (CUDA 12.1 wheel) ====
 uv pip install --index-url https://download.pytorch.org/whl/cu121 \
     "torch==2.4.0" \
@@ -138,6 +145,15 @@ echo "=== setup done. ==="
 echo "次回以降は:"
 echo "  cd ${PROJECT_ROOT}"
 echo "  uv run python your_script.py"
+echo
+echo "Qwen3.5 GPTQ quantization で通った条件:"
+echo "  .venv/bin/python scripts/quantize_qwen35_9b_gptq.py \\"
+echo "    --output-dir ${PROJECT_ROOT}/model/Qwen3.5-9B-GPTQ-INT8 \\"
+echo "    --calibration-preset math_qa_cot \\"
+echo "    --max-calibration-samples 32 \\"
+echo "    --max-seq-len 512 \\"
+echo "    --bits 8"
+echo "  ※ vLLM など GPU を占有するプロセスは事前に停止すること。"
 
 # ==== 8.git 初期化 ====
 git config --global user.email "mss.fujimoto@gmail.com"

@@ -6,7 +6,8 @@ Example:
     uv run python scripts/quantize_qwen35_9b_gptq.py \
         --output-dir /workspace/llm-2026-eval/model/Qwen3.5-9B-GPTQ-INT8 \
         --calibration-preset math_qa_cot \
-        --max-calibration-samples 128
+        --max-calibration-samples 128 \
+        --max-seq-len 8192
 
 Required packages:
     uv add gptqmodel optimum transformers datasets accelerate sentencepiece
@@ -72,6 +73,14 @@ This model is a GPTQ-quantized version of `{args.model_name}`.
 - Max calibration samples: {args.max_calibration_samples}
 - Max sequence length: {args.max_seq_len}
 
+## Recommended Baseline
+
+For `Qwen/Qwen3.5-9B` with the `math_qa_cot` calibration preset, the current recommended baseline on a 96GB-class GPU is:
+
+- `--max-calibration-samples 128`
+- `--max-seq-len 8192`
+- `--bits 8`
+
 ## Intended Use
 
 This checkpoint was created to measure whether quantization degrades math reasoning quality, especially chain-of-thought stability.
@@ -114,6 +123,8 @@ model = AutoModelForCausalLM.from_pretrained(
 
 - This repository contains quantized weights only.
 - Evaluation should be performed on math benchmarks such as GSM8K or MATH-500 to check answer accuracy and CoT-format failures.
+- Long math CoT calibration samples are often truncated heavily below `--max-seq-len 8192`.
+- Stop vLLM or other GPU-heavy processes before quantization to avoid OOM during GPTQ.
 """
 
 
@@ -188,13 +199,16 @@ def parse_args() -> argparse.Namespace:
         "--max-calibration-samples",
         type=int,
         default=128,
-        help="Maximum number of calibration samples.",
+        help="Maximum number of calibration samples. 128 is a good default on 96GB-class GPUs.",
     )
     parser.add_argument(
         "--max-seq-len",
         type=int,
-        default=2048,
-        help="Maximum sequence length per calibration sample.",
+        default=8192,
+        help=(
+            "Maximum sequence length per calibration sample. "
+            "8192 is a practical default for the current math CoT calibration set on 96GB-class GPUs."
+        ),
     )
     parser.add_argument(
         "--bits",
@@ -387,7 +401,7 @@ def main() -> None:
     print("Loading base model for GPTQ quantization")
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        quantize_config=quantize_config,
+        quantization_config=quantize_config,
         device_map="auto",
         torch_dtype=torch.float16,
         trust_remote_code=args.trust_remote_code,
