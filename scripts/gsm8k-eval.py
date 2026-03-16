@@ -7,6 +7,7 @@ Unsloth 4bit Base Model + LoRA + vLLM で openai/gsm8k を評価するスクリ�
 import argparse
 import json
 import os
+import tempfile
 from collections import Counter
 from typing import List, Dict, Any, Optional
 
@@ -16,19 +17,19 @@ from vllm.lora.request import LoRARequest
 
 from mymath_verify import verify_math_answer, MathVerifyConfig, MathVerifyResult
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PretrainedConfig
 
-WANDB_PROJECT = "qwen3.5-9b-gsm8k-100"
+WANDB_PROJECT = "qwen3.5-9b-GPTQ-INT8-gsm8k-100"
 WANDB_ENTITY = "mssfj-1"
-WANDB_RUNNAME = "qwen3.5-9b"
+WANDB_RUNNAME = "qwen3.5-9b-GPTQ-INT8"
 
-MODEL_NAME = "Qwen/Qwen3.5-9B"
+MODEL_NAME = "mssfj/Qwen3.5-9B-GPTQ-INT8"
 
 #LORA_PATH = "/workspace/model/qwen3_sft_lora_openmathinst2-1000/"
 LORA_PATH = ""
 BATCH_SIZE = 8
-MAX_TOKENS = 4096
-OUTPUT_PATH = "/workspace/llm-2026-eval/outputs/gsm8k_eval_qwen3.5-9b.jsonl"
+MAX_TOKENS = 2048
+OUTPUT_PATH = "/workspace/llm-2026-eval/outputs/gsm8k_eval_qwen3.5-9b-GPTQ-INT8.jsonl"
 
 
 def extract_gsm8k_gold_answer(answer_text: str) -> str:
@@ -50,7 +51,43 @@ def build_prompt(question: str, tokenizer) -> str:
         {"role": "system", "content": "You are a careful mathematical problem solver."},
         {"role": "user", "content": user_content},
     ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return tokenizer.apply_chat_template(messages, tokenize=False, enable_thinking=False, add_generation_prompt=True)
+
+
+def maybe_build_vllm_compat_config(model_name: str) -> Optional[tempfile.TemporaryDirectory]:
+    config_dict, _ = PretrainedConfig.get_config_dict(model_name, trust_remote_code=True)
+    if config_dict.get("model_type") != "qwen3_5_text":
+        return None
+
+    text_config = {
+        key: value
+        for key, value in config_dict.items()
+        if key not in {"architectures", "model_type", "quantization_config", "transformers_version"}
+    }
+    text_config["model_type"] = "qwen3_5_text"
+
+    compat_config = {
+        "model_type": "qwen3_5",
+        "architectures": ["Qwen3_5ForCausalLM"],
+        "text_config": text_config,
+        "quantization_config": config_dict.get("quantization_config"),
+        "bos_token_id": config_dict.get("bos_token_id"),
+        "eos_token_id": config_dict.get("eos_token_id"),
+        "tie_word_embeddings": config_dict.get("tie_word_embeddings", False),
+    }
+
+    temp_dir = tempfile.TemporaryDirectory(prefix="vllm-hf-config-")
+    with open(os.path.join(temp_dir.name, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(compat_config, f, ensure_ascii=False, indent=2)
+
+    return temp_dir
+
+
+def should_force_language_model_only(config_dict: Dict[str, Any]) -> bool:
+    return (
+        config_dict.get("model_type") in {"qwen3_5", "qwen3_5_text"}
+        and config_dict.get("architectures") == ["Qwen3_5ForCausalLM"]
+    )
 
 def evaluate_gsm8k_with_vllm(
     model_name: str,
@@ -76,6 +113,11 @@ def evaluate_gsm8k_with_vllm(
     if lora_path:
         print(f"Enabling LoRA with adapter: {lora_path}")
 
+    config_dict, _ = PretrainedConfig.get_config_dict(model_name, trust_remote_code=True)
+    compat_config_dir = maybe_build_vllm_compat_config(model_name)
+    if compat_config_dir is not None:
+        print(f"Using vLLM compatibility config: {compat_config_dir.name}")
+
     llm_kwargs = {
         "model": model_name,
         "trust_remote_code": True,
@@ -87,6 +129,10 @@ def evaluate_gsm8k_with_vllm(
         "max_lora_rank": 32 if lora_path else 16,
         "max_num_seqs": batch_size,
     }
+    if compat_config_dir is not None:
+        llm_kwargs["hf_config_path"] = compat_config_dir.name
+    if should_force_language_model_only(config_dict):
+        llm_kwargs["language_model_only"] = True
     llm = LLM(**llm_kwargs)
 
     sampling_params = SamplingParams(
