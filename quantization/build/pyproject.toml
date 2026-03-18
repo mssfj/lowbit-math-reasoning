@@ -1,0 +1,19 @@
+[project]
+name = "llm-build"
+version = "0.1.0"
+description = "Separate build environment for quantization and model conversion"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "transformers @ git+https://github.com/huggingface/transformers.git",
+    "accelerate",
+    "datasets",
+    "sentencepiece",
+    "gptqmodel>=5.7.0",
+    "optimum>=2.1.0",
+    "bitsandbytes",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+]

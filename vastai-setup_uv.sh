@@ -3,10 +3,11 @@ set -euxo pipefail
 
 # ==== 設定 ====
 if [ "$#" -lt 1 ]; then
-	echo "プロジェクトのルートディレクトリの指定が必要です。例)bash vastai-setup_uv.sh /workspace/lowbit-math-reasoning,/root/lowbit-math-reasoning" >&2
+  echo "プロジェクトのルートディレクトリの指定が必要です。例) bash vastai-setup_uv.sh /workspace/lowbit-math-reasoning" >&2
   exit 1
 fi
 PROJECT_ROOT="$(realpath -m "$1")"
+BUILD_ROOT="${PROJECT_ROOT}/build"
 
 # ==== 0. 基本パッケージ ====
 sudo apt-get update
@@ -23,60 +24,45 @@ unzip awscliv2.zip
 sudo ./aws/install --update
 aws configure
 
-aws s3 cp s3://llm-train-dev/codex/auth.json ~/.codex/auth.json
+mkdir -p ~/.codex
+a​ws s3 cp s3://llm-train-dev/codex/auth.json ~/.codex/auth.json
 
-# キャッシュをクリア
 npm cache clean -f
-
-# バージョン管理ツール 'n' をインストール
 npm install -g n
-
-# 最新のLTS（推奨版）をインストール
 n lts
 
-# --- 【ここが修正ポイント：新しいパスを強制認識】 ---
-export PATH="/usr/local/bin:$PATH"
+export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
 hash -r
-# ----------------------------------------------
 
 npm install -g @openai/codex@latest
-
-# 反映させるためにシェルを再起動、またはパスを通す
-hash -r
-
-# ==== gemini-cliのインストール ====
 npm install -g @google/gemini-cli
+hash -r
 
 # ==== 1. uv インストール ====
 curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+hash -r
 
 # ==== 2. プロジェクトディレクトリ ====
-mkdir -p "${PROJECT_ROOT}"
+mkdir -p "${PROJECT_ROOT}" "${BUILD_ROOT}"
 cd "${PROJECT_ROOT}"
 
-if [ ! -f pyproject.toml ]; then
-  uv init --python 3.10 .
-fi
-
-# ==== 3. pyproject.toml を上書き（コンペ用構成・グループ分け） ====
-cat > pyproject.toml << 'EOF'
+# ==== 3. ルート pyproject.toml を作成（評価用） ====
+cat > pyproject.toml << 'PYPROJECT_EVAL'
 [project]
 name = "llm-eval"
 version = "0.1.0"
 description = "LLM Eval Pipeline"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.12"
 
 # 共通依存
 dependencies = [
-    "transformers @ git+https://github.com/huggingface/transformers.git",
     "accelerate",
     "datasets",
     "peft",
     "bitsandbytes",
     "sentencepiece",
     "evaluate",
-    # wandb 0.22.3+ supports newer W&B API key formats and works with NumPy 2.x.
     "wandb==0.22.3",
     "tiktoken",
     "scikit-learn",
@@ -85,76 +71,112 @@ dependencies = [
     "setuptools",
     "sympy",
     "unsloth",
-    "vllm",
     "gptqmodel>=5.7.0",
     "optimum>=2.1.0",
 ]
 
-# グループ依存（uv の新仕様）
 [dependency-groups]
-# SFT: 今後 SFT専用をここに追加
 sft = [
 ]
 
-# GRPO / RL / 推論
 grpo = [
 ]
 
-# 評価系（math-verify 等）
 eval = [
+    "transformers @ git+https://github.com/huggingface/transformers.git@v4.57.6",
+    "vllm==0.17.0",
 ]
 
-# 開発用
 dev = [
     "pytest",
     "ipykernel",
 ]
-EOF
+PYPROJECT_EVAL
 
-# ==== 4. 依存インストール（Torch 以外） ====
+# ==== 4. build/pyproject.toml を作成（量子化・変換用） ====
+cat > "${BUILD_ROOT}/pyproject.toml" << 'PYPROJECT_BUILD'
+[project]
+name = "llm-build"
+version = "0.1.0"
+description = "Separate build environment for quantization and model conversion"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "transformers @ git+https://github.com/huggingface/transformers.git",
+    "accelerate",
+    "datasets",
+    "sentencepiece",
+    "gptqmodel>=5.7.0",
+    "optimum>=2.1.0",
+    "bitsandbytes",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+]
+PYPROJECT_BUILD
+
+# ==== 5. lock と sync ====
+uv lock
 uv sync --group sft --group grpo --group dev --group eval
 
-# Qwen3.5 GPTQ 量子化では、公開版 transformers 4.x では model_type=qwen3_5 を
-# 認識できないため、GitHub の最新版で上書きする。
-uv pip install --python .venv/bin/python --upgrade \
-    git+https://github.com/huggingface/transformers.git
+cd "${BUILD_ROOT}"
+uv lock
+uv sync
+cd "${PROJECT_ROOT}"
 
-# ==== 5. PyTorch (CUDA 12.1 wheel) ====
-uv pip install --index-url https://download.pytorch.org/whl/cu121 \
+# ==== 6. PyTorch (CUDA 12.1 wheel) ====
+uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu121 \
     "torch==2.4.0" \
     "torchvision==0.19.0" \
     "torchaudio==2.4.0"
 
-# ==== 6. ディレクトリ構成 ====
-# mkdir -p "${PROJECT_ROOT}"/logs "${PROJECT_ROOT}"/checkpoints "${PROJECT_ROOT}"/configs "${PROJECT_ROOT}"/data "${PROJECT_ROOT}"/model
-mkdir -p "${PROJECT_ROOT}"/configs "${PROJECT_ROOT}"/outputs
+uv pip install --python "${BUILD_ROOT}/.venv/bin/python" --index-url https://download.pytorch.org/whl/cu121 \
+    "torch==2.4.0" \
+    "torchvision==0.19.0" \
+    "torchaudio==2.4.0"
 
-# ==== 7. 動作確認 ====
-uv run python - << 'PYCODE'
+# ==== 7. ディレクトリ構成 ====
+mkdir -p "${PROJECT_ROOT}/configs" "${PROJECT_ROOT}/outputs" "${PROJECT_ROOT}/model"
+
+# ==== 8. 動作確認 ====
+uv run --group eval python - << 'PYCODE'
 import torch
-print("torch version:", torch.__version__)
-print("cuda available:", torch.cuda.is_available())
-print("cuda version:", torch.version.cuda)
+import vllm
+import transformers
+print("eval torch version:", torch.__version__)
+print("eval cuda available:", torch.cuda.is_available())
+print("eval cuda version:", torch.version.cuda)
+print("eval vllm version:", vllm.__version__)
+print("eval transformers version:", transformers.__version__)
 PYCODE
 
+(
+  cd "${BUILD_ROOT}"
+  uv run python - << 'PYCODE'
+import torch
+import transformers
+print("build torch version:", torch.__version__)
+print("build cuda available:", torch.cuda.is_available())
+print("build cuda version:", torch.version.cuda)
+print("build transformers version:", transformers.__version__)
+PYCODE
+)
+
 echo "=== setup done. ==="
-echo "次回以降は:"
+echo "eval環境:"
 echo "  cd ${PROJECT_ROOT}"
-echo "  uv run python your_script.py"
+echo "  uv run --group eval python scripts/gsm8k-eval.py --model-name ./model/Qwen3.5-9B-GPTQ-INT4"
 echo
-echo "Qwen3.5 GPTQ quantization で通った条件:"
-echo "  .venv/bin/python scripts/quantize_qwen35_9b_gptq.py \\"
-echo "    --output-dir ${PROJECT_ROOT}/model/Qwen3.5-9B-GPTQ-INT8 \\"
-echo "    --calibration-preset math_qa_cot \\"
-echo "    --max-calibration-samples 32 \\"
-echo "    --max-seq-len 512 \\"
-echo "    --bits 8"
+echo "build環境:"
+echo "  cd ${BUILD_ROOT}"
+echo "  uv run python ../scripts/quantize_qwen35_9b_gptq.py \\\n    --output-dir ${PROJECT_ROOT}/model/Qwen3.5-9B-GPTQ-INT4 \\\n    --calibration-preset math_qa_cot \\\n    --max-calibration-samples 32 \\\n    --max-seq-len 512 \\\n    --bits 4"
 echo "  ※ vLLM など GPU を占有するプロセスは事前に停止すること。"
 
-# ==== 8.git 初期化 ====
+# ==== 9. git 初期化 ====
 git config --global user.email "mss.fujimoto@gmail.com"
 git config --global user.name "Masashi Fujimoto"
 
-# ==== 9.クリーニング ====
-rm -r ./aws
-rm ./awscliv2.zip
+# ==== 10. クリーニング ====
+rm -rf ./aws
+rm -f ./awscliv2.zip

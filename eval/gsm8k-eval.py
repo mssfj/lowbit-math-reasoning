@@ -19,17 +19,17 @@ from mymath_verify import verify_math_answer, MathVerifyConfig, MathVerifyResult
 
 from transformers import AutoTokenizer, PretrainedConfig
 
-WANDB_PROJECT = "qwen3.5-9b-GPTQ-INT8-gsm8k-100"
+WANDB_PROJECT = "qwen3.5-9b-GPTQ-INT4-gsm8k-100"
 WANDB_ENTITY = "mssfj-1"
-WANDB_RUNNAME = "qwen3.5-9b-GPTQ-INT8"
+WANDB_RUNNAME = "qwen3.5-9b-GPTQ-INT4"
 
-MODEL_NAME = "mssfj/Qwen3.5-9B-GPTQ-INT8"
+MODEL_NAME = "mssfj/Qwen3.5-9B-GPTQ-INT4"
 
 #LORA_PATH = "/workspace/model/qwen3_sft_lora_openmathinst2-1000/"
 LORA_PATH = ""
 BATCH_SIZE = 8
 MAX_TOKENS = 2048
-OUTPUT_PATH = "/workspace/llm-2026-eval/outputs/gsm8k_eval_qwen3.5-9b-GPTQ-INT8.jsonl"
+OUTPUT_PATH = "/workspace/lowbit_math_reasning/outputs/gsm8k_eval_qwen3.5-9b-GPTQ-INT4.jsonl"
 
 
 def extract_gsm8k_gold_answer(answer_text: str) -> str:
