@@ -3,7 +3,7 @@ set -euxo pipefail
 
 # ==== 設定 ====
 if [ "$#" -lt 1 ]; then
-	echo "プロジェクトのルートディレクトリの指定が必要です。例)bash vastai-setup_uv.sh /workspace/llm-2026-eval,/root/llm-2026-eval" >&2
+	echo "プロジェクトのルートディレクトリの指定が必要です。例)bash vastai-setup_uv.sh /workspace/lowbit-math-reasoning,/root/lowbit-math-reasoning" >&2
   exit 1
 fi
 PROJECT_ROOT="$(realpath -m "$1")"
@@ -69,7 +69,7 @@ requires-python = ">=3.10"
 
 # 共通依存
 dependencies = [
-    "transformers",
+    "transformers @ git+https://github.com/huggingface/transformers.git",
     "accelerate",
     "datasets",
     "peft",
@@ -98,10 +98,6 @@ sft = [
 
 # GRPO / RL / 推論
 grpo = [
-    "transformers==4.57.6",
-    "trl==0.22.2",
-    "vllm==0.17.0",
-    "math-verify[antlr4_13_2]",
 ]
 
 # 評価系（math-verify 等）

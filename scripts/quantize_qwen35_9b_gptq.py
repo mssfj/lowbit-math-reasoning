@@ -4,10 +4,11 @@ Quantize Qwen/Qwen3.5-9B to GPTQ and save it locally.
 
 Example:
     uv run python scripts/quantize_qwen35_9b_gptq.py \
-        --output-dir /workspace/llm-2026-eval/model/Qwen3.5-9B-GPTQ-INT8 \
+        --output-dir /workspace/lowbit-math-reasoning/model/Qwen3.5-9B-GPTQ-INT4 \
         --calibration-preset math_qa_cot \
         --max-calibration-samples 128 \
-        --max-seq-len 8192
+        --max-seq-len 16384 \
+        --bits 4
 
 Required packages:
     uv add gptqmodel optimum transformers datasets accelerate sentencepiece
@@ -21,7 +22,7 @@ from typing import Iterable, List, Optional
 
 
 DEFAULT_MODEL_NAME = "Qwen/Qwen3.5-9B"
-DEFAULT_OUTPUT_DIR = "/workspace/llm-2026-eval/model/Qwen3.5-9B-GPTQ-INT8"
+DEFAULT_OUTPUT_DIR = "/workspace/lowbit-math-reasoning/model/Qwen3.5-9B-GPTQ-INT4"
 DEFAULT_DATASET_NAME = "zwhe99/DeepMath-103K"
 DEFAULT_DATASET_CONFIG = ""
 
@@ -75,11 +76,11 @@ This model is a GPTQ-quantized version of `{args.model_name}`.
 
 ## Recommended Baseline
 
-For `Qwen/Qwen3.5-9B` with the `math_qa_cot` calibration preset, the current recommended baseline on a 96GB-class GPU is:
+For `Qwen/Qwen3.5-9B` with the `math_qa_cot` calibration preset, the current recommended baseline on a 48GB-class GPU is:
 
 - `--max-calibration-samples 128`
-- `--max-seq-len 8192`
-- `--bits 8`
+- `--max-seq-len 16384`
+- `--bits 4`
 
 ## Intended Use
 
