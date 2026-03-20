@@ -36,6 +36,8 @@ export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
 hash -r
 
 npm install -g @openai/codex@latest
+
+# ==== gemini-cliのインストール ====
 npm install -g @google/gemini-cli
 hash -r
 
@@ -49,9 +51,6 @@ mkdir -p \
   "${PROJECT_ROOT}" \
   "${PROJECT_ROOT}/eval" \
   "${QUANTIZATION_ROOT}" \
-  "${PROJECT_ROOT}/prompts" \
-  "${PROJECT_ROOT}/experiments" \
-  "${PROJECT_ROOT}/results"
 cd "${PROJECT_ROOT}"
 
 # ==== 3. eval / quantization の uv プロジェクト ====
@@ -74,10 +73,6 @@ dependencies = [
     "gptqmodel>=5.7.0",
     "optimum>=2.1.0",
     "bitsandbytes",
-]
-
-[dependency-groups]
-dev = [
     "ipykernel",
 ]
 PYPROJECT_QUANTIZATION
@@ -85,11 +80,9 @@ PYPROJECT_QUANTIZATION
 # ==== 4. lock と sync ====
 cd "${EVAL_ROOT}"
 uv lock
-uv sync --group sft --group grpo --group dev --group eval
 
 cd "${QUANTIZATION_ROOT}"
 uv lock
-uv sync
 cd "${PROJECT_ROOT}"
 
 # ==== 5. PyTorch (CUDA 12.1 wheel) ====
@@ -105,7 +98,7 @@ uv pip install --python "${QUANTIZATION_ROOT}/.venv/bin/python" --index-url http
 
 # ==== 6. 動作確認 ====
 cd "${EVAL_ROOT}"
-uv run --group eval python - << PYCODE
+uv run python - << PYCODE
 import torch
 import vllm
 import transformers
@@ -128,16 +121,6 @@ print("quantization transformers version:", transformers.__version__)
 PYCODE
 )
 
-echo "=== setup done. ==="
-echo "eval環境:"
-echo "  cd ${EVAL_ROOT}"
-echo "  uv run --group eval python eval/gsm8k-eval.py --model-name ./experiments/models/Qwen3.5-9B-GPTQ-INT4"
-echo
-echo "quantization環境:"
-echo "  cd ${QUANTIZATION_ROOT}"
-echo "  uv run python quantize_qwen35_9b_gptq.py \\\n    --output-dir ${PROJECT_ROOT}/experiments/models/Qwen3.5-9B-GPTQ-INT4 \\\n    --calibration-preset math_qa_cot \\\n    --max-calibration-samples 32 \\\n    --max-seq-len 512 \\\n    --bits 4"
-echo "  ※ vLLM など GPU を占有するプロセスは事前に停止すること。"
-
 # ==== 7. git 初期化 ====
 git config --global user.email "mss.fujimoto@gmail.com"
 git config --global user.name "Masashi Fujimoto"
@@ -145,3 +128,5 @@ git config --global user.name "Masashi Fujimoto"
 # ==== 8. クリーニング ====
 rm -rf ./aws
 rm -f ./awscliv2.zip
+
+echo "=== setup done. ==="

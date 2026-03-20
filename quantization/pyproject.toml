@@ -1,7 +1,7 @@
 [project]
-name = "llm-build"
+name = "llm-quantization"
 version = "0.1.0"
-description = "Separate build environment for quantization and model conversion"
+description = "Separate quantization environment for GPTQ/AWQ and model conversion"
 requires-python = ">=3.10,<3.12"
 dependencies = [
     "transformers @ git+https://github.com/huggingface/transformers.git",
