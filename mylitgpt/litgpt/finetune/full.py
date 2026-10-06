@@ -63,6 +63,7 @@ def setup(
     optimizer: str | dict = "AdamW",
     logger_name: LoggerChoice = "csv",
     seed: int = 1337,
+    activation_checkpointing: bool = False,
     access_token: str | None = None,
 ) -> None:
     """Finetune a model.
@@ -83,6 +84,7 @@ def setup(
         optimizer: An optimizer name (such as "AdamW") or config.
         logger_name: The name of the logger to send metrics to.
         seed: The random seed to use for reproducibility.
+        activation_checkpointing: Recompute transformer block activations to reduce memory on a single device.
         access_token: Optional API token to access models with restrictions.
     """
     checkpoint_dir = auto_download_checkpoint(model_name=checkpoint_dir, access_token=access_token)
@@ -120,7 +122,8 @@ def setup(
     if torch.cuda.is_available() and devices > 1:
         check_nvlink_connectivity(fabric)
 
-    fabric.launch(main, devices, resume, seed, config, data, checkpoint_dir, out_dir, train, eval, optimizer, num_nodes)
+    fabric.launch(main, devices, resume, seed, config, data, checkpoint_dir, out_dir, train, eval, optimizer, num_nodes,
+                  activation_checkpointing)
 
 
 def main(
@@ -136,6 +139,7 @@ def main(
     eval: EvalArgs,
     optimizer: str | dict,
     num_nodes: int = 1,
+    activation_checkpointing: bool = False,
 ) -> None:
     validate_args(train, eval)
 
@@ -152,6 +156,10 @@ def main(
     checkpoint_path = checkpoint_dir / "lit_model.pth"
     with fabric.init_module(empty_init=(fabric.world_size > 1)):
         model = GPT(config)
+
+    if activation_checkpointing and fabric.world_size == 1:
+        from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import apply_activation_checkpointing
+        apply_activation_checkpointing(model, check_fn=lambda module: isinstance(module, Block))
 
     fabric.print(f"Number of trainable parameters: {num_parameters(model, requires_grad=True):,}")
 
@@ -279,9 +287,10 @@ def fit(
 
         is_accumulating = state["iter_num"] % train.gradient_accumulation_iters(devices, num_nodes) != 0
         with fabric.no_backward_sync(model, enabled=is_accumulating):
-            logits = model(input_ids)
+            logits = model(input_ids, lm_head_chunk_size=128)
             # shift the targets such that output n predicts token n+1
-            loss = chunked_cross_entropy(logits[..., :-1, :], targets[..., 1:])
+            logits[-1] = logits[-1][..., :-1, :]
+            loss = chunked_cross_entropy(logits, targets[..., 1:])
             fabric.backward(loss / train.gradient_accumulation_iters(devices, num_nodes))
 
         running_loss.update(loss.detach())

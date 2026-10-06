@@ -150,6 +150,8 @@ weights_dir = Path(os.environ["HF_WEIGHTS_DIR"])
 hf_dir = Path(os.environ["HF_DIR"])
 
 config = AutoConfig.from_pretrained(lit_dir, local_files_only=True)
+# This run uses train.tie_embeddings=false; preserve both learned matrices.
+config.tie_word_embeddings = False
 state_dict = torch.load(weights_dir / "model.pth", map_location="cpu", mmap=True, weights_only=True)
 
 with torch.device("meta"):

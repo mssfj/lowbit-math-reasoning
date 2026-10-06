@@ -24,6 +24,7 @@ data/
 
 # logs
 logs/
+out/
 wandb/
 
 # notebook

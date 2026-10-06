@@ -1,0 +1,18 @@
+{
+  "model_repo": "mssfj/qwen25-0.5b-finemath-4plus",
+  "model_revision": "4b34bcd7d6c9dee519204ecf43c491041c9066cc",
+  "dataset_repo": "mssfj/finemath-4plus-qwen25",
+  "dataset_revision": "c0e59cf67bdca55c2b298a06a298f229dfecd447",
+  "val_loss": 1.5797834396362305,
+  "val_ppl": 4.853904534077458,
+  "max_iters": 100,
+  "batch_size": 8,
+  "seq_length": 2048,
+  "num_workers": 8,
+  "seed": 42,
+  "precision": "bf16-mixed",
+  "evaluation_micro_batch_size": 1,
+  "torch_version": "2.12.0a0+0291f960b6.nv26.04.48445190",
+  "seconds": 67.1051657369826,
+  "comparison_step_9000_val_loss": 1.580837368965149
+}
