@@ -72,9 +72,9 @@ extract the final boxed answer from every formatted training/validation solution
 Native LitGPT checkpoints retain the trained master weights. The Transformers
 export stores BF16 safetensors. `generation_config.json` stops on `<|im_end|>`
 or `<|endoftext|>`. Training details, the final validation loss, and small generation
-checks are recorded in `training_report.json` when the export finishes.
+checks are recorded in `training_report.json`.
 Validation loss is computed on the SFT validation split, not on either benchmark.
-No benchmark accuracy is claimed in this card.
+Benchmark results and evaluation conditions are reported below.
 
 ## Evaluation
 
@@ -83,12 +83,12 @@ Use the existing repository evaluation scripts with the local Transformers expor
 ```bash
 python eval/gsm8k-eval.py \
   --model-name out/finemath-openmath-sft/huggingface \
-  --max-samples 0 --max-tokens 2048 --wandb-mode disabled \
+  --max-samples 0 --max-tokens 2048 --batch-size 8 --wandb-mode disabled \
   --output-path eval/outputs/finemath-openmath-sft-gsm8k.jsonl
 
 python eval/math500-eval.py \
   --model-name out/finemath-openmath-sft/huggingface \
-  --max-samples 0 --max-tokens 4096 --quantization none --load-format none \
+  --max-samples 0 --max-tokens 4096 --batch-size 8 --quantization none --load-format none \
   --wandb-mode disabled \
   --output-path eval/outputs/finemath-openmath-sft-math500.jsonl
 ```
@@ -97,6 +97,61 @@ The scripts require their vLLM evaluation environment. Use the same generation
 and retry settings across models for the TDT comparison. SFT targets the normal
 step-by-step prompt; MATH500's optional final-answer-only retry is an evaluation
 procedure rather than a separate SFT training target.
+
+## Benchmark results
+
+Evaluated on October 6, 2026 with the repository's existing
+`eval/gsm8k-eval.py` and `eval/math500-eval.py` scripts and answer verifiers.
+The evaluated checkpoint is the BF16 Transformers export at revision
+`44cb74b31f3093321e45c471b3b40cb53e703d4c` of
+`mssfj/qwen25-0.5b-finemath-4plus-openmath-sft`.
+These results describe that export; the FP32 native LitGPT checkpoint was not
+independently benchmarked.
+
+| Benchmark | Test questions | Correct | Accuracy |
+| --- | ---: | ---: | ---: |
+| GSM8K (`openai/gsm8k`, `main`, test) | 1,319 | 161 | 12.21% |
+| MATH500 (`HuggingFaceH4/MATH-500`, test), including the evaluator's retry | 500 | 24 | 4.80% |
+
+Conditions: zero-shot, step-by-step boxed-answer prompts, greedy decoding
+(temperature 0, top-p 1), BF16, no quantization or LoRA, and batch size 8.
+GSM8K allows 2,048 generated tokens with a 4,096-token context limit;
+MATH500 allows 4,096 generated tokens with an 8,192-token context limit.
+GSM8K uses eager execution; MATH500 uses the script's default graph execution.
+The environment was Python 3.11.17, vLLM 0.30.0, Transformers 5.18.0,
+PyTorch 2.13.0+cu130, datasets 5.1.0, and SymPy 1.14.0 on one
+NVIDIA GeForce RTX 5060 Ti (16 GB).
+
+MATH500 performs one final-answer-only retry when the first response has no
+extractable final answer. There were **105 retried questions**; the table reports
+the evaluator's final score after that retry. It is not a single-generation
+pass@1 measurement. GSM8K does not use that retry. Both scores use this
+repository's exact/numeric/symbolic answer verification rules.
+
+### GSM8K answer-extraction audit
+
+All 1,319 questions and gold answers were checked against the test split.
+For all **1,231 responses with a complete boxed answer**, the last complete box
+in the full response matched the saved extracted answer. An independent numeric
+comparison, including thousands separators and simple fractions, found the same
+**161 correct answers**, with no additional correct boxed answers recovered.
+Of the **88 responses without a boxed answer**, **86 reached the 2,048-token
+output limit**, commonly with repeated reasoning. A loose trailing-number
+fallback found only two numerical matches in unfinished responses; these are
+not counted as validated final answers.
+
+For example, the first GSM8K problem has gold answer `18`, while the model
+explicitly ends with `\boxed{42}`; the evaluator correctly extracts `42`.
+Low SFT validation loss therefore does not imply high freely generated
+mathematical accuracy.
+
+Detailed artifacts:
+[GSM8K predictions](https://huggingface.co/mssfj/qwen25-0.5b-finemath-4plus-openmath-sft/blob/main/benchmark_results/gsm8k.jsonl),
+[GSM8K summary](https://huggingface.co/mssfj/qwen25-0.5b-finemath-4plus-openmath-sft/blob/main/benchmark_results/gsm8k.summary.json),
+[MATH500 predictions](https://huggingface.co/mssfj/qwen25-0.5b-finemath-4plus-openmath-sft/blob/main/benchmark_results/math500.jsonl),
+[MATH500 summary](https://huggingface.co/mssfj/qwen25-0.5b-finemath-4plus-openmath-sft/blob/main/benchmark_results/math500.summary.json),
+[environment and model hash](https://huggingface.co/mssfj/qwen25-0.5b-finemath-4plus-openmath-sft/blob/main/benchmark_results/metadata.json), and
+[GSM8K extraction audit](https://huggingface.co/mssfj/qwen25-0.5b-finemath-4plus-openmath-sft/blob/main/benchmark_results/gsm8k-extraction-audit.json).
 
 ## Limitations and licensing
 

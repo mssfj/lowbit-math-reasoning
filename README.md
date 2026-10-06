@@ -7,6 +7,25 @@ This repository provides scripts for low-bit quantization of math reasoning mode
 - `tdt_mnist/`: forward-only TDT-D ternary learning on MNIST, with exactly 1,000 trainable weights by default ([日本語の実行手順](tdt_mnist/README.md))
 - `vastai-setup_uv.sh`: helper setup script for GPU environments such as Vast.ai
 
+## FineMath OpenMath SFT benchmarks
+
+The [FineMath OpenMath SFT model](https://huggingface.co/mssfj/qwen25-0.5b-finemath-4plus-openmath-sft)
+was evaluated with the existing scripts in `eval/` on the full test splits:
+
+| Benchmark | Correct / total | Accuracy |
+| --- | ---: | ---: |
+| GSM8K | 161 / 1,319 | 12.21% |
+| MATH500, including the evaluator's missing-answer retry | 24 / 500 | 4.80% |
+
+The evaluated model is the BF16 HF export, using zero-shot greedy generation,
+no quantization or LoRA, batch size 8, and output limits of 2,048 tokens for
+GSM8K and 4,096 for MATH500. MATH500 retried 105 missing-answer responses;
+its reported score is not single-generation pass@1. Native LitGPT weights
+were not independently benchmarked. A full GSM8K extraction audit recovered
+no additional correct boxed answers.
+See the [English model card](model_cards/qwen25-0.5b-finemath-openmath-sft.md)
+for conditions and the public prediction/audit artifacts on Hugging Face.
+
 ## Requirements
 
 - Python `>=3.10,<3.12`

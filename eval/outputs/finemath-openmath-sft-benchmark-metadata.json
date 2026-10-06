@@ -1,0 +1,41 @@
+{
+  "evaluated_model": "mssfj/qwen25-0.5b-finemath-4plus-openmath-sft",
+  "model_revision": "44cb74b31f3093321e45c471b3b40cb53e703d4c",
+  "model_safetensors_sha256": "b063ece4ac3c4154e02755ca52d06cfbb82a05051dbc9f6e200c61e5e9fb576f",
+  "repository_commit": "220305548898a6a1c956649f33e9b30b2544718c",
+  "packages": {
+    "vllm": "0.30.0",
+    "transformers": "5.18.0",
+    "torch": "2.13.0",
+    "datasets": "5.1.0",
+    "sympy": "1.14.0"
+  },
+  "dataset_revisions_observed": {
+    "openai/gsm8k": "740312add88f781978c0658806c59bc2815b9866",
+    "HuggingFaceH4/MATH-500": "6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be"
+  },
+  "dtype": "bfloat16",
+  "quantization": null,
+  "temperature": 0.0,
+  "top_p": 1.0,
+  "batch_size": 8,
+  "gsm8k": {
+    "script": "eval/gsm8k-eval.py",
+    "split": "test",
+    "config": "main",
+    "max_tokens": 2048,
+    "max_model_len": 4096,
+    "enforce_eager": true
+  },
+  "math500": {
+    "script": "eval/math500-eval.py",
+    "split": "test",
+    "max_tokens": 4096,
+    "max_model_len": 8192,
+    "retry_policy": "One final-answer-only retry for missing_final_answer, as implemented by the existing script.",
+    "enforce_eager": false,
+    "missing_final_answer_retry_count": 105
+  },
+  "completed_at": "2026-10-06T12:17:06.079469+00:00",
+  "hardware": "NVIDIA GeForce RTX 5060 Ti (16 GB)"
+}

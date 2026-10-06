@@ -1,0 +1,10 @@
+{
+  "mssfj/qwen25-0.5b-finemath-4plus-openmath-sft": {
+    "revision": "8c969ccf307317569b5cebaebaa1250dd8a13edc",
+    "files_verified": 7
+  },
+  "mssfj/qwen25-0.5b-finemath-4plus-openmath-sft-lit": {
+    "revision": "f18e55eeadad20e2fad54e788b4fbedca9d2e094",
+    "files_verified": 7
+  }
+}

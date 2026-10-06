@@ -1,0 +1,20 @@
+{
+  "model_name": "/root/lowbit-math-reasoning/out/finemath-openmath-sft/huggingface",
+  "lora_path": "",
+  "num_samples": 500,
+  "num_correct": 24,
+  "em": 0.048,
+  "reason_counts": {
+    "mismatch": 408,
+    "missing_final_answer": 68,
+    "exact_match": 24
+  },
+  "avg_generation_tokens_per_second": 2074.1132718670788,
+  "overall_generation_tokens_per_second": 2074.1132718670788,
+  "generation_elapsed_time_seconds": 497.0311959249957,
+  "total_generation_tokens": 1030899,
+  "model_loading_vram_gib": 1.18,
+  "model_loading_time_seconds": 2.134933,
+  "available_kv_cache_memory_gib": 12.01,
+  "gpu_kv_cache_size_tokens": 1049232
+}
